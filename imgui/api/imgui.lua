@@ -1439,12 +1439,6 @@ function imgui.font_pop() end
 ---@return number old_scale
 function imgui.font_scale(font_id, scale) end
 
---- Graphics adapter family of the running engine (dmGraphics::GetInstalledAdapterFamily).
---- 2=OpenGL 3=OpenGL ES 4=Vulkan 8=Metal; when not 2/3 the extension's GL rendering path is unavailable
---- and the Lua side should skip imgui drawing.
----@return integer adapter_family
-function imgui.get_adapter_family() end
-
 --- Physical screen density (dpi, queried once per process and cached).
 --- On Android reads DisplayMetrics.densityDpi via JNI; other platforms return 96 (Lua treats it as 1x).
 --- Intended for UI scaling compensation on high-density screens.
