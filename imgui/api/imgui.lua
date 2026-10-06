@@ -779,6 +779,14 @@ function imgui.is_mouse_double_clicked(button) end
 ---@return boolean clicked
 function imgui.is_mouse_clicked(button) end
 
+---@param button integer|imgui.MOUSEBUTTON
+---@return boolean down
+function imgui.is_mouse_down(button) end
+
+---@return number x
+---@return number y
+function imgui.get_mouse_pos() end
+
 ---@return boolean active
 function imgui.is_item_active() end
 
@@ -909,6 +917,10 @@ function imgui.get_scroll_y() end
 
 ---@return number max_y maximum vertical scroll (0 = content fits)
 function imgui.get_scroll_max_y() end
+
+---Set current window vertical scroll (clamped internally to [0, scroll max]).
+---@param y number
+function imgui.set_scroll_y(y) end
 
 ---@param x number
 ---@param y number

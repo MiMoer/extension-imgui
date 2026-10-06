@@ -2667,6 +2667,50 @@ static int imgui_IsMouseClicked(lua_State* L)
     return 1;
 }
 
+/** IsMouseDown
+ * @name is_mouse_down
+ * @number button
+ * @treturn boolean down
+ */
+static int imgui_IsMouseDown(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 1);
+    imgui_NewFrame();
+    uint32_t button = luaL_checknumber(L, 1);
+    bool down = ImGui::IsMouseDown(button);
+    lua_pushboolean(L, down);
+    return 1;
+}
+
+/** GetMousePos
+ * @name get_mouse_pos
+ * @treturn number x
+ * @treturn number y
+ */
+static int imgui_GetMousePos(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 2);
+    imgui_NewFrame();
+    ImVec2 pos = ImGui::GetMousePos();
+    lua_pushnumber(L, pos.x);
+    lua_pushnumber(L, pos.y);
+    return 2;
+}
+
+/** SetScrollY
+ * @name set_scroll_y
+ * @number y
+ * @return nothing
+ */
+static int imgui_SetScrollY(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 0);
+    imgui_NewFrame();
+    float y = luaL_checknumber(L, 1);
+    ImGui::SetScrollY(y);
+    return 0;
+}
+
 /** IsItemActive
  * @name is_item_active
  * @treturn boolean active
@@ -4316,6 +4360,8 @@ static const luaL_reg Module_methods[] =
     {"is_item_hovered", imgui_IsItemHovered},
     {"get_item_rect_max", imgui_GetItemRectMax},
     {"is_mouse_clicked", imgui_IsMouseClicked},
+    {"is_mouse_down", imgui_IsMouseDown},
+    {"get_mouse_pos", imgui_GetMousePos},
     {"is_mouse_double_clicked", imgui_IsMouseDoubleClicked},
     {"set_keyboard_focus_here", imgui_SetKeyboardFocusHere},
     {"set_item_default_focus", imgui_SetItemDefaultFocus},
@@ -4355,6 +4401,7 @@ static const luaL_reg Module_methods[] =
     {"set_next_window_content_size", imgui_SetNextWindowContentSize},
     {"get_scroll_y", imgui_GetScrollY},
     {"get_scroll_max_y", imgui_GetScrollMaxY},
+    {"set_scroll_y", imgui_SetScrollY},
     {"drag_scroll_window", imgui_DragScrollWindow},
     {0, 0}
 };
