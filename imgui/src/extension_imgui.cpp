@@ -15,6 +15,7 @@
 // imgui renderer backend and possible platform extras
 #if defined(DM_PLATFORM_ANDROID)
 #include "imgui/imgui_impl_android.h"
+#include <dmsdk/dlib/android.h>   // dmAndroid::ThreadAttacher: soft keyboard and screen density queries
 #endif
 #include "imgui_impl_defold.h"
 
@@ -3858,6 +3859,278 @@ static void imgui_Shutdown()
     ImGui::DestroyContext();
 }
 
+// ----------------------------
+// ----- Extension-specific APIs --------
+// ----------------------------
+// The following APIs have no counterpart in upstream extension-imgui.
+
+/** QueryScreenDensity
+ * Physical screen density (dpi), queried once per process and cached.
+ * Android reads DisplayMetrics.densityDpi via JNI (public API via reflection, no manifest change needed);
+ * other platforms return 96 - the Lua side clamps values below the reference density to 1x, so desktop is effectively uncompensated.
+ */
+static float imgui_QueryScreenDensity()
+{
+    static float s_density = 0.0f; // 0 = not queried yet
+    if (s_density > 0.0f)
+    {
+        return s_density;
+    }
+
+    s_density = 96.0f;
+#if defined(DM_PLATFORM_ANDROID)
+    dmAndroid::ThreadAttacher attacher;
+    JNIEnv* env = attacher.GetEnv();
+    ANativeActivity* activity = attacher.GetActivity();
+    if (env && activity && activity->clazz)
+    {
+        jobject activity_obj = activity->clazz;
+        jclass activity_class = env->GetObjectClass(activity_obj);
+        jmethodID get_resources = env->GetMethodID(activity_class, "getResources", "()Landroid/content/res/Resources;");
+        jobject resources = env->CallObjectMethod(activity_obj, get_resources);
+        if (resources && env->ExceptionCheck() == JNI_FALSE)
+        {
+            jclass resources_class = env->GetObjectClass(resources);
+            jmethodID get_metrics = env->GetMethodID(resources_class, "getDisplayMetrics", "()Landroid/util/DisplayMetrics;");
+            jobject metrics = env->CallObjectMethod(resources, get_metrics);
+            if (metrics && env->ExceptionCheck() == JNI_FALSE)
+            {
+                jclass metrics_class = env->GetObjectClass(metrics);
+                jfieldID dpi_field = env->GetFieldID(metrics_class, "densityDpi", "I");
+                int dpi = (int)env->GetIntField(metrics, dpi_field);
+                if (dpi > 0)
+                {
+                    s_density = (float)dpi;
+                }
+            }
+        }
+        if (env->ExceptionCheck() == JNI_TRUE)
+        {
+            env->ExceptionClear();
+        }
+    }
+#endif
+    dmLogInfo("imgui: screen density = %.0f dpi", s_density);
+    return s_density;
+}
+
+/** GetScreenDensity
+ * @name get_screen_density
+ * @treturn number screen density (dpi)
+ */
+static int imgui_GetScreenDensity(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 1);
+    lua_pushnumber(L, imgui_QueryScreenDensity());
+    return 1;
+}
+
+#if defined(DM_PLATFORM_ANDROID)
+/** ShowSoftKeyboard
+ * @name show_soft_keyboard
+ * Show/hide the Android soft keyboard (IME).
+ *
+ * Goes through the engine's own DefoldActivity#showSoftInput instead of calling InputMethodManager
+ * on the decor view directly: modern IMEs (Gboard with targetSdk >= 28) express backspace only via
+ * InputConnection.deleteSurroundingText, and the decor view has no InputConnection, so backspace
+ * would be silently dropped. The engine's hidden input field (EditText +
+ * dispatched by the input system as a key_backspace action.
+ * DefoldInputWrapper) receives deleteSurroundingText and re-issues a native backspace key event,
+ *
+ * @boolean show true to show / false to hide
+ * @number [keyboard_type] 0 default / 1 numeric / 2 email / 3 password (must match
+ *         DefoldActivity.GLFWKeyboardType; read on show only)
+ * @treturn boolean whether the engine call was issued
+ */
+static int imgui_ShowSoftKeyboard(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 1);
+    int show = lua_toboolean(L, 1);
+    int keyboard_type = 0;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2))
+    {
+        keyboard_type = (int) luaL_checkinteger(L, 2);
+    }
+
+    bool ok = false;
+    dmAndroid::ThreadAttacher attacher;
+    JNIEnv* env = attacher.GetEnv();
+    ANativeActivity* activity = attacher.GetActivity();
+    if (env && activity && activity->clazz)
+    {
+        jobject activity_obj = activity->clazz;
+        jclass activity_class = env->GetObjectClass(activity_obj);
+
+        if (show)
+        {
+            jmethodID set_hidden = env->GetMethodID(activity_class, "setUseHiddenInputField", "(Z)V");
+            if (set_hidden)
+            {
+                env->CallVoidMethod(activity_obj, set_hidden, JNI_TRUE);
+            }
+            jmethodID show_method = env->GetMethodID(activity_class, "showSoftInput", "(I)V");
+            if (show_method)
+            {
+                env->CallVoidMethod(activity_obj, show_method, (jint) keyboard_type);
+                ok = env->ExceptionCheck() == JNI_FALSE;
+            }
+        }
+        else
+        {
+            // The engine hideSoftInput also collapses the IME and restores immersive mode state.
+            jmethodID hide_method = env->GetMethodID(activity_class, "hideSoftInput", "()V");
+            if (hide_method)
+            {
+                env->CallVoidMethod(activity_obj, hide_method);
+                ok = env->ExceptionCheck() == JNI_FALSE;
+            }
+        }
+
+        if (env->ExceptionCheck() == JNI_TRUE)
+        {
+            env->ExceptionClear();
+            ok = false;
+        }
+    }
+
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+#else
+/** ShowSoftKeyboard
+ * @name show_soft_keyboard
+ * Not implemented on this platform, always returns false.
+ * @boolean show ignored
+ * @number [keyboard_type] ignored
+ * @treturn boolean false
+ */
+static int imgui_ShowSoftKeyboard(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 1);
+    lua_pushboolean(L, 0);
+    return 1;
+}
+#endif
+
+/** SetNextWindowContentSize
+ * @name set_next_window_content_size
+ * @number width  0 = unconstrained width
+ * @number height content height (scroll basis: > 0 shows a vertical scrollbar when the window is too short)
+ */
+static int imgui_SetNextWindowContentSize(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 0);
+    imgui_NewFrame();
+    float width  = (float)luaL_checknumber(L, 1);
+    float height = (float)luaL_checknumber(L, 2);
+    ImGui::SetNextWindowContentSize(ImVec2(width, height));
+    return 0;
+}
+
+/** GetScrollY
+ * @name get_scroll_y
+ * @treturn number current vertical scroll
+ */
+static int imgui_GetScrollY(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 1);
+    imgui_NewFrame();
+    lua_pushnumber(L, ImGui::GetScrollY());
+    return 1;
+}
+
+/** GetScrollMaxY
+ * @name get_scroll_max_y
+ * @treturn number maximum vertical scroll (0 = content fits)
+ */
+static int imgui_GetScrollMaxY(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 1);
+    imgui_NewFrame();
+    lua_pushnumber(L, ImGui::GetScrollMaxY());
+    return 1;
+}
+
+/** DragScrollWindow
+ * @name drag_scroll_window
+ * Touch drag scrolling: holding and dragging the window blank area scrolls the window instead of moving it.
+    // Call once per frame after Begin while the window is current. Presses on the title bar / scrollbar /
+    // any item are left to native interaction; the hover test happens only at press time,
+    // so scrolling continues even when the pointer drags away from the initial blank area.
+ */
+static int imgui_DragScrollWindow(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 0);
+    imgui_NewFrame();
+
+    // One touch belongs to one window: remember the initiating window id; other windows do not
+    // respond again during the drag (stacked windows all call this every frame).
+    static ImGuiID s_DragWindow = 0;
+
+    if (!ImGui::IsMouseDown(0))
+    {
+        s_DragWindow = 0;
+        return 0;
+    }
+
+    ImGuiWindow* win = ImGui::GetCurrentWindowRead();
+    if (win == NULL)
+    {
+        s_DragWindow = 0;
+        return 0;
+    }
+
+    if (s_DragWindow != 0)
+    {
+        if (s_DragWindow != win->ID)
+        {
+            return 0;
+        }
+    }
+    else
+    {
+        if (!ImGui::IsWindowHovered())
+        {
+            return 0;
+        }
+        // Presses on items go to the item's own interaction (buttons / input fields / sliders); no scroll drag
+        if (ImGui::IsAnyItemHovered() || ImGui::IsAnyItemActive())
+        {
+            return 0;
+        }
+        // Title bar presses are left to window movement
+        if (win->TitleBarRect().Contains(ImGui::GetIO().MousePos))
+        {
+            return 0;
+        }
+        // Border presses are left to window resizing
+        if (win->ResizeBorderHovered != -1)
+        {
+            return 0;
+        }
+        // Scrollbar presses are left to native scrollbar dragging
+        if (win->ScrollbarY && ImGui::GetWindowScrollbarRect(win, ImGuiAxis_Y).Contains(ImGui::GetIO().MousePos))
+        {
+            return 0;
+        }
+        // Content fits the window: nothing to scroll
+        if (ImGui::GetScrollMaxY() <= 0.0f)
+        {
+            return 0;
+        }
+        s_DragWindow = win->ID;
+    }
+
+    // Per-frame mouse delta comes from IO (1.92 has no standalone GetMouseDelta free function in the ImGui namespace)
+    ImVec2 delta = ImGui::GetIO().MouseDelta;
+    if (delta.y != 0.0f)
+    {
+        // SetScrollY clamps internally to [0, ScrollMaxY]
+        ImGui::SetScrollY(ImGui::GetScrollY() - delta.y);
+    }
+    return 0;
+}
+
 static void imgui_ExtensionInit()
 {
     dmExtension::RegisterCallback(dmExtension::CALLBACK_POST_RENDER, (FExtensionCallback)imgui_Draw );
@@ -4076,7 +4349,14 @@ static const luaL_reg Module_methods[] =
     {"set_scroll_here_y", imgui_SetScrollHereY},
 
 
-{0, 0}
+    // Extension-specific API (no counterpart in upstream extension-imgui)
+    {"get_screen_density", imgui_GetScreenDensity},
+    {"show_soft_keyboard", imgui_ShowSoftKeyboard},
+    {"set_next_window_content_size", imgui_SetNextWindowContentSize},
+    {"get_scroll_y", imgui_GetScrollY},
+    {"get_scroll_max_y", imgui_GetScrollMaxY},
+    {"drag_scroll_window", imgui_DragScrollWindow},
+    {0, 0}
 };
 
 static void lua_setfieldstringstring(lua_State* L, const char* key, const char* value)

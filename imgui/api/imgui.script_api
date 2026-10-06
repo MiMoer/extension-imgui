@@ -1745,12 +1745,14 @@
     parameters:
     - name: ttf_data
       type: string
+    - name: data_size
+      type: number
     - name: font_size
       type: number
     - name: font_pixels
       type: number
     - name: glyph_ranges
-      type: string
+      type: number
     returns:
     - name: font_index
       type: number
