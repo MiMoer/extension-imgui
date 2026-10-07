@@ -838,16 +838,6 @@ function imgui.add_input_character(character) end
 function imgui.add_input_characters(characters) end
 
 ---
---- TEXT INPUT
-
----@param character string
-function imgui.add_input_character(character) end
-
----@param characters string
-function imgui.add_input_characters(characters) end
-
-
----
 --- TREE
 
 ---@param label string

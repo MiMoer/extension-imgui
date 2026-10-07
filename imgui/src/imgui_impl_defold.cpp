@@ -467,7 +467,8 @@ bool ImGui_ImplDefold_Init(dmResource::HFactory resource_factory)
     g_Renderer.m_ProjMtxLocation = dmGraphics::INVALID_UNIFORM_LOCATION;
 
     // 1.92 dynamic font atlas: the backend services create/update/destroy requests from
-    // ImGuiPlatformIO::Textures[], baking glyphs on demand at runtime - arbitrary character
+    // ImGuiPlatformIO::Textures[], baking glyphs on demand at runtime so arbitrary
+    // character input works without pre-baked glyph ranges.
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
 
     io.BackendRendererUserData = &g_Renderer;

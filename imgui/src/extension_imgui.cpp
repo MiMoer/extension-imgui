@@ -64,7 +64,7 @@ enum ExtImGuiGlyphRanges {
 static bool g_imgui_NewFrame        = false;
 static char* g_imgui_TextBuffer     = 0;
 static dmArray<ImFont*> g_imgui_Fonts;
-// Forward declaration: text_getsize (around line 1600) uses this for bounds checking; defined further below.
+// Forward declaration: text_getsize uses this for bounds checking; defined further below.
 static ImFont* imgui_GetFont(int index);
 static dmArray<ImgObject> g_imgui_Images;
 static bool g_RenderingEnabled      = true;
@@ -1560,7 +1560,7 @@ static int imgui_Text(lua_State* L)
 }
 
 /** TextGetSize
- * @name text_get_size
+ * @name text_getsize
  * @string text
  * @number font_size
  * @number [fontid]
@@ -2175,7 +2175,7 @@ static int imgui_Selectable(lua_State* L)
 /** Button
  * @name button
  * @string text
- * @number [width]
+ * @number [width]  optional; provide width and height together or omit both
  * @number [height]
  * @treturn boolean pushed
  */
@@ -2218,7 +2218,7 @@ static int imgui_SmallButton(lua_State* L)
 /** ButtonImage
  * @name button_image
  * @number texture_id
- * @number [width]
+ * @number [width]  optional; provide width and height together or omit both
  * @number [height]
  * @treturn boolean pushed
  */
@@ -3776,7 +3776,7 @@ static int imgui_DrawRectFilled(lua_State* L)
 }
 
 /** DrawProgressBar
- * @name draw_progress_bar
+ * @name draw_progress
  * @number progress
  * @number xsize
  * @number ysize
@@ -3810,7 +3810,7 @@ static int imgui_SetRenderingEnabled(lua_State* L)
 // ----------------------------
 
 /** WantCaptureMouse
- * @name want_capture_mouse
+ * @name want_mouse_input
  */
 static int imgui_WantCaptureMouse(lua_State* L)
 {
@@ -3821,7 +3821,7 @@ static int imgui_WantCaptureMouse(lua_State* L)
 }
 
 /** WantCaptureKeyboard
- * @name want_capture_keyboard
+ * @name want_keyboard_input
  */
 static int imgui_WantCaptureKeyboard(lua_State* L)
 {
@@ -3832,7 +3832,7 @@ static int imgui_WantCaptureKeyboard(lua_State* L)
 }
 
 /** WantCaptureText
- * @name want_capture_text
+ * @name want_text_input
  */
 static int imgui_WantCaptureText(lua_State* L)
 {
@@ -4071,6 +4071,21 @@ static int imgui_SetNextWindowContentSize(lua_State* L)
     return 0;
 }
 
+/** SetNextWindowScroll
+ * @name set_next_window_scroll
+ * @number x
+ * @number y
+ */
+static int imgui_SetNextWindowScroll(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 0);
+    imgui_NewFrame();
+    float x = (float)luaL_checknumber(L, 1);
+    float y = (float)luaL_checknumber(L, 2);
+    ImGui::SetNextWindowScroll(ImVec2(x, y));
+    return 0;
+}
+
 /** GetScrollY
  * @name get_scroll_y
  * @treturn number current vertical scroll
@@ -4098,9 +4113,9 @@ static int imgui_GetScrollMaxY(lua_State* L)
 /** DragScrollWindow
  * @name drag_scroll_window
  * Touch drag scrolling: holding and dragging the window blank area scrolls the window instead of moving it.
-    // Call once per frame after Begin while the window is current. Presses on the title bar / scrollbar /
-    // any item are left to native interaction; the hover test happens only at press time,
-    // so scrolling continues even when the pointer drags away from the initial blank area.
+ * Call once per frame after Begin while the window is current. Presses on the title bar / scrollbar /
+ * any item are left to native interaction; the hover test happens only at press time,
+ * so scrolling continues even when the pointer drags away from the initial blank area.
  */
 static int imgui_DragScrollWindow(lua_State* L)
 {
@@ -4399,6 +4414,7 @@ static const luaL_reg Module_methods[] =
     {"get_screen_density", imgui_GetScreenDensity},
     {"show_soft_keyboard", imgui_ShowSoftKeyboard},
     {"set_next_window_content_size", imgui_SetNextWindowContentSize},
+    {"set_next_window_scroll", imgui_SetNextWindowScroll},
     {"get_scroll_y", imgui_GetScrollY},
     {"get_scroll_max_y", imgui_GetScrollMaxY},
     {"set_scroll_y", imgui_SetScrollY},
@@ -4406,13 +4422,6 @@ static const luaL_reg Module_methods[] =
     {0, 0}
 };
 
-static void lua_setfieldstringstring(lua_State* L, const char* key, const char* value)
-{
-    int top = lua_gettop(L);
-    lua_pushstring(L, value);
-    lua_setfield(L, -2, key);
-    assert(top == lua_gettop(L));
-}
 static void lua_setfieldstringint(lua_State* L, const char* key, uint32_t value)
 {
     int top = lua_gettop(L);
