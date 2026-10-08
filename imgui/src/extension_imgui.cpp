@@ -8,6 +8,9 @@
 
 #include "imgui/imgui.h"
 #include "imgui/imconfig.h"
+// drag_scroll_window needs ImGuiWindow / GetCurrentWindowRead / ImGuiAxis_Y /
+// GetWindowScrollbarRect - imgui internal interfaces the official extension does not include by default.
+#include "imgui/imgui_internal.h"
 
 // imgui renderer backend and possible platform extras
 #if defined(DM_PLATFORM_ANDROID)
@@ -54,12 +57,14 @@ enum ExtImGuiGlyphRanges {
     ExtImGuiGlyphRanges_ChineseSimplifiedCommon,
     ExtImGuiGlyphRanges_Cyrillic,
     ExtImGuiGlyphRanges_Thai,
-    ExtImGuiGlyphRanges_Vietnamese
+    ExtImGuiGlyphRanges_Vietnamese,
 };
 
 static bool g_imgui_NewFrame        = false;
 static char* g_imgui_TextBuffer     = 0;
 static dmArray<ImFont*> g_imgui_Fonts;
+// Forward declaration: text_getsize (around line 1600) uses this for bounds checking; defined further below.
+static ImFont* imgui_GetFont(int index);
 static dmArray<ImgObject> g_imgui_Images;
 static bool g_RenderingEnabled      = true;
 
@@ -1572,7 +1577,22 @@ static int imgui_TextGetSize(lua_State* L)
     {
         fontid = luaL_checkinteger(L, 3);
     }
-    ImFont *font = g_imgui_Fonts[fontid];
+// fontid out of range must not index g_imgui_Fonts[fontid] directly: the dmArray subscript assert would
+// abort the whole app (observed as random aborts after startup, stack showing only dmArray<ImFont*>::operator[]).
+// So resolve through imgui_GetFont with bounds checking; fall back to font 0 with a warning when out of range.
+    ImFont *font = imgui_GetFont(fontid);
+    if (font == 0)
+    {
+        dmLogWarning("imgui: text_getsize fontid %d out of range (registered=%d), fallback to 0",
+                     fontid, (int)g_imgui_Fonts.Size());
+        font = imgui_GetFont(0);
+    }
+    if (font == 0)
+    {
+        lua_pushnumber(L, 0.0f);
+        lua_pushnumber(L, 0.0f);
+        return 2;
+    }
     ImVec2 sz = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text);
 
     lua_pushnumber(L, sz.x);
@@ -2212,11 +2232,18 @@ static int imgui_ButtonImage(lua_State* L)
     {
         int width = luaL_checkinteger(L, 2);
         int height = luaL_checkinteger(L, 3);
-        pushed = ImGui::ImageButton((void*)(intptr_t)tid, ImVec2(width, height));
+// The old ImageButton overload using the texture ID as implicit control ID was removed in imgui 1.92
+// (the overload is commented out in imgui_widgets.cpp); the new overload requires an explicit str_id.
+// To keep the old semantics (independent IDs for multiple buttons on the same texture), PushID first as the legacy implementation did.
+        ImGui::PushID((ImTextureID)(intptr_t)tid);
+        pushed = ImGui::ImageButton("", (ImTextureID)(intptr_t)tid, ImVec2(width, height));
+        ImGui::PopID();
     }
     else
     {
-        pushed = ImGui::ImageButton((void*)(intptr_t)tid, ImVec2(0,0));
+        ImGui::PushID((ImTextureID)(intptr_t)tid);
+        pushed = ImGui::ImageButton("", (ImTextureID)(intptr_t)tid, ImVec2(0,0));
+        ImGui::PopID();
     }
     lua_pushboolean(L, pushed);
     return 1;
@@ -2234,7 +2261,7 @@ static int imgui_ButtonArrow(lua_State* L)
     imgui_NewFrame();
     const char* label = luaL_checkstring(L, 1);
     uint32_t direction = luaL_checkint(L, 2);
-    bool pushed = ImGui::ArrowButton(label, direction);
+    bool pushed = ImGui::ArrowButton(label, (ImGuiDir)direction);
     lua_pushboolean(L, pushed);
     return 1;
 }
@@ -2864,7 +2891,8 @@ static int imgui_GetStyle(lua_State* L)
     lua_rawset(L, -3);
 
     lua_pushliteral(L, "TabMinWidthForCloseButton");        // float
-    lua_pushnumber(L, style.TabMinWidthForCloseButton);
+// Renamed to TabCloseButtonMinWidthUnselected in 1.92 (same meaning: min width of the close button on unselected tabs)
+    lua_pushnumber(L, style.TabCloseButtonMinWidthUnselected);
     lua_rawset(L, -3);
 
     lua_pushliteral(L, "ColorButtonPosition");      // ImGuiDir
@@ -2977,7 +3005,7 @@ static int imgui_SetStyle(lua_State* L)
         }
         else if (strcmp(attr, "WindowMenuButtonPosition") == 0)
         {
-            style.WindowMenuButtonPosition = luaL_checkinteger(L, -1);
+            style.WindowMenuButtonPosition = (ImGuiDir)luaL_checkinteger(L, -1);
         }
         else if (strcmp(attr, "ChildRounding") == 0)
         {
@@ -3071,11 +3099,11 @@ static int imgui_SetStyle(lua_State* L)
         }
         else if (strcmp(attr, "TabMinWidthForCloseButton") == 0)
         {
-            style.TabMinWidthForCloseButton = luaL_checknumber(L, -1);
+            style.TabCloseButtonMinWidthUnselected = luaL_checknumber(L, -1);
         }
         else if (strcmp(attr, "ColorButtonPosition") == 0)
         {
-            style.ColorButtonPosition = luaL_checkinteger(L, -1);
+            style.ColorButtonPosition = (ImGuiDir)luaL_checkinteger(L, -1);
         }
         else if (strcmp(attr, "ButtonTextAlign") == 0)
         {
@@ -3422,6 +3450,7 @@ static ImFont* imgui_GetFont(int index)
     }
     return 0;
 }
+
 
 ImWchar* LuaToGlyphRanges(lua_State * L, int index) {
     const ImWchar* glyph_ranges = NULL;
@@ -3813,12 +3842,8 @@ static void imgui_Init(float width, float height, dmResource::HFactory resource_
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(width, height);
 
-    // init keymap list
-    // We will be sending the correct ImGuiKey_ enums from Lua
-    for (int i = 0; i < 512; i++)
-    {
-        io.KeyMap[i] = 0;
-    }
+// Removed in 1.92 along with the legacy keymap API (io.KeyMap[] only remains as a comment in imgui.h);
+// keys use ImGuiKey_ enums directly; no native-key-to-index mapping table is needed.
 
     ImGui_ImplDefold_Init(resource_factory);
 }
@@ -4049,7 +4074,9 @@ static const luaL_reg Module_methods[] =
     {"get_frame_height", imgui_GetFrameHeight},
 
     {"set_scroll_here_y", imgui_SetScrollHereY},
-    {0, 0}
+
+
+{0, 0}
 };
 
 static void lua_setfieldstringstring(lua_State* L, const char* key, const char* value)
@@ -4122,7 +4149,7 @@ static void LuaInit(lua_State* L)
      *
      * @field SELECTABLE_ALLOW_ITEM_OVERLAP
      */
-     lua_setfieldstringint(L, "SELECTABLE_ALLOW_ITEM_OVERLAP", ImGuiSelectableFlags_AllowItemOverlap);
+     lua_setfieldstringint(L, "SELECTABLE_ALLOW_ITEM_OVERLAP", ImGuiSelectableFlags_AllowOverlap);
 
     /**
      * TABITEM_UNSAVED_DOCUMENT
@@ -4215,7 +4242,7 @@ static void LuaInit(lua_State* L)
      *
      * @field TREENODE_ALLOW_ITEM_OVERLAP
      */
-     lua_setfieldstringint(L, "TREENODE_ALLOW_ITEM_OVERLAP", ImGuiTreeNodeFlags_AllowItemOverlap);
+     lua_setfieldstringint(L, "TREENODE_ALLOW_ITEM_OVERLAP", ImGuiTreeNodeFlags_AllowOverlap);
     /**
      * TREENODE_NO_TREE_PUSH_ON_OPEN
      *
@@ -5156,7 +5183,9 @@ static void LuaInit(lua_State* L)
      * Ensure child windows without border uses style.WindowPadding (ignored by default for non-bordered child windows, because more convenient)
      * @field WINDOWFLAGS_ALWAYSUSEWINDOWPADDING
      */
-     lua_setfieldstringint(L, "WINDOWFLAGS_ALWAYSUSEWINDOWPADDING", ImGuiWindowFlags_AlwaysUseWindowPadding);
+     // This flag moved to ImGuiChildFlags in 1.90 (the old ImGuiWindowFlags_AlwaysUseWindowPadding is deprecated);
+     // the Lua-side constant name stays unchanged, only the value now comes from the ChildFlags version.
+     lua_setfieldstringint(L, "WINDOWFLAGS_ALWAYSUSEWINDOWPADDING", ImGuiChildFlags_AlwaysUseWindowPadding);
     /**
      * WINDOWFLAGS_NONAVINPUTS
      * No gamepad/keyboard navigation within the window
@@ -5229,7 +5258,8 @@ static void LuaInit(lua_State* L)
      *
      * @field POPUPFLAGS_MOUSEBUTTONDEFAULT
      */
-     lua_setfieldstringint(L, "POPUPFLAGS_MOUSEBUTTONDEFAULT", ImGuiPopupFlags_MouseButtonDefault_);
+     // The old name ImGuiPopupFlags_MouseButtonDefault_ was removed; its historical value was 0 (default button), kept identical here
+     lua_setfieldstringint(L, "POPUPFLAGS_MOUSEBUTTONDEFAULT", ImGuiPopupFlags_None);
     /**
      * POPUPFLAGS_NOOPENOVEREXISTINGPOPUP
      * For OpenPopup*(), BeginPopupContext*(): don't open if there's already a popup at the same level of the popup stack
@@ -5302,7 +5332,7 @@ static void LuaInit(lua_State* L)
      * Automatically expire the payload if the source cease to be submitted (otherwise payloads are persisting while being dragged)
      * @field DROPFLAGS_SOURCEAUTOEXPIREPAYLOAD
      */
-     lua_setfieldstringint(L, "DROPFLAGS_SOURCEAUTOEXPIREPAYLOAD", ImGuiDragDropFlags_SourceAutoExpirePayload);
+     lua_setfieldstringint(L, "DROPFLAGS_SOURCEAUTOEXPIREPAYLOAD", ImGuiDragDropFlags_PayloadAutoExpire);
     /**
      * DROPFLAGS_ACCEPTBEFOREDELIVERY
      * AcceptDragDropPayload() will returns true even before the mouse button is released. You can then call IsDelivery() to test if the payload needs to be delivered.
