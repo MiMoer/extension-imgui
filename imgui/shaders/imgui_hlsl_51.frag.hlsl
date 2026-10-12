@@ -1,7 +1,7 @@
 #define IMGUI_ROOT_SIGNATURE "CBV(b0,space=0,visibility=SHADER_VISIBILITY_VERTEX),DescriptorTable(SRV(t0,space=1),visibility=SHADER_VISIBILITY_PIXEL),DescriptorTable(Sampler(s0,space=1),visibility=SHADER_VISIBILITY_PIXEL),RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT|DENY_HULL_SHADER_ROOT_ACCESS|DENY_DOMAIN_SHADER_ROOT_ACCESS|DENY_GEOMETRY_SHADER_ROOT_ACCESS)"
 
 Texture2D<float4> Texture : register(t0, space1);
-SamplerState _Texture_sampler : register(s0, space1);
+SamplerState Texture_separated : register(s0, space1);
 
 static float4 Out_Color;
 static float4 Frag_Color;
@@ -20,7 +20,7 @@ struct SPIRV_Cross_Output
 
 void frag_main()
 {
-    Out_Color = Frag_Color * Texture.Sample(_Texture_sampler, Frag_UV);
+    Out_Color = Frag_Color * Texture.Sample(Texture_separated, Frag_UV);
 }
 
 [RootSignature(IMGUI_ROOT_SIGNATURE)]
