@@ -4409,16 +4409,16 @@ static const luaL_reg Module_methods[] =
 
     {"set_scroll_here_y", imgui_SetScrollHereY},
 
-
-    // Extension-specific API (no counterpart in upstream extension-imgui)
-    {"get_screen_density", imgui_GetScreenDensity},
-    {"show_soft_keyboard", imgui_ShowSoftKeyboard},
     {"set_next_window_content_size", imgui_SetNextWindowContentSize},
     {"set_next_window_scroll", imgui_SetNextWindowScroll},
     {"get_scroll_y", imgui_GetScrollY},
     {"get_scroll_max_y", imgui_GetScrollMaxY},
     {"set_scroll_y", imgui_SetScrollY},
     {"drag_scroll_window", imgui_DragScrollWindow},
+
+    // Extension-specific API (no counterpart in upstream extension-imgui)
+    {"get_screen_density", imgui_GetScreenDensity},
+    {"show_soft_keyboard", imgui_ShowSoftKeyboard},
     {0, 0}
 };
 

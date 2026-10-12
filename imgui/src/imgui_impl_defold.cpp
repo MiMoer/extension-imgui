@@ -22,6 +22,19 @@ namespace
         { 16057607012685438136ULL, 1, 1, 1 }, // Texture_separated
     };
 
+    // Root parameter order is defined by IMGUI_ROOT_SIGNATURE in the HLSL sources.
+    // Binding/set refer to ShaderDesc reflection, rather than HLSL register numbers.
+    static const dmGraphics::ShaderDesc::HLSLResourceMapping HLSL_VERTEX_RESOURCES[] = {
+        { 5242665690161703654ULL, 0, 0, 0 }, // imgui_uniforms -> CBV(b0, space0)
+    };
+
+    static const dmGraphics::ShaderDesc::HLSLResourceMapping HLSL_FRAGMENT_RESOURCES[] = {
+        { 11509546322550963027ULL, 0, 1, 1 }, // Texture -> SRV(t0, space1)
+        { 16057607012685438136ULL, 1, 1, 2 }, // Texture_separated -> Sampler(s0, space1)
+    };
+
+    static const char* HLSL_ROOT_SIGNATURE_PATH = "/imgui/shaders/imgui_hlsl_51.rootsig";
+
     struct ShaderResourceSpec
     {
         const char*                         m_Path;
@@ -50,6 +63,11 @@ namespace
     static const ShaderResourceSpec WEBGPU_SHADER_RESOURCES[] = {
         { "/imgui/shaders/imgui.wgsl.vert", dmGraphics::ShaderDesc::SHADER_TYPE_VERTEX,   dmGraphics::ShaderDesc::LANGUAGE_WGSL, 0, 0 },
         { "/imgui/shaders/imgui.wgsl.frag", dmGraphics::ShaderDesc::SHADER_TYPE_FRAGMENT, dmGraphics::ShaderDesc::LANGUAGE_WGSL, 0, 0 },
+    };
+
+    static const ShaderResourceSpec DIRECTX_SHADER_RESOURCES[] = {
+        { "/imgui/shaders/imgui_hlsl_51.vert.dxbc", dmGraphics::ShaderDesc::SHADER_TYPE_VERTEX,   dmGraphics::ShaderDesc::LANGUAGE_HLSL_51, 0, 0 },
+        { "/imgui/shaders/imgui_hlsl_51.frag.dxbc", dmGraphics::ShaderDesc::SHADER_TYPE_FRAGMENT, dmGraphics::ShaderDesc::LANGUAGE_HLSL_51, 0, 0 },
     };
 
     static const uint32_t MAX_SHADER_RESOURCE_COUNT = sizeof(STANDARD_SHADER_RESOURCES) / sizeof(STANDARD_SHADER_RESOURCES[0]);
@@ -86,6 +104,12 @@ namespace
     static const ShaderResourceSpec* GetShaderResources(uint32_t* count, bool* separate_texture_sampler)
     {
         dmGraphics::AdapterFamily family = dmGraphics::GetInstalledAdapterFamily();
+        if (family == dmGraphics::ADAPTER_FAMILY_DIRECTX)
+        {
+            *count = sizeof(DIRECTX_SHADER_RESOURCES) / sizeof(DIRECTX_SHADER_RESOURCES[0]);
+            *separate_texture_sampler = true;
+            return DIRECTX_SHADER_RESOURCES;
+        }
         if (family == dmGraphics::ADAPTER_FAMILY_METAL)
         {
             *count = sizeof(METAL_SHADER_RESOURCES) / sizeof(METAL_SHADER_RESOURCES[0]);
@@ -139,6 +163,14 @@ namespace
         shader.m_Source.m_Count = data_size;
         shader.m_MslResourceMapping.m_Data  = (dmGraphics::ShaderDesc::MSLResourceMapping*) spec.m_MslResources;
         shader.m_MslResourceMapping.m_Count = spec.m_MslResourceCount;
+        if (spec.m_Language == dmGraphics::ShaderDesc::LANGUAGE_HLSL_51)
+        {
+            bool vertex = spec.m_Type == dmGraphics::ShaderDesc::SHADER_TYPE_VERTEX;
+            shader.m_HlslResourceMapping.m_Data = (dmGraphics::ShaderDesc::HLSLResourceMapping*) (vertex ? HLSL_VERTEX_RESOURCES : HLSL_FRAGMENT_RESOURCES);
+            shader.m_HlslResourceMapping.m_Count = vertex ?
+                sizeof(HLSL_VERTEX_RESOURCES) / sizeof(HLSL_VERTEX_RESOURCES[0]) :
+                sizeof(HLSL_FRAGMENT_RESOURCES) / sizeof(HLSL_FRAGMENT_RESOURCES[0]);
+        }
         return shader;
     }
 
@@ -368,8 +400,23 @@ namespace
         dmArray<dmGraphics::ShaderDesc::ResourceMember> members;
         dmGraphics::ShaderDesc shader_desc = CreateShaderDesc(specs, shader_resource_count, separate_texture_sampler, shader_resources, shaders, inputs, textures, uniform_buffers, types, members);
 
+        LoadedShaderResource root_signature = {};
+        if (dmGraphics::GetInstalledAdapterFamily() == dmGraphics::ADAPTER_FAMILY_DIRECTX)
+        {
+            dmResource::Result result = dmResource::GetRaw(g_Renderer.m_ResourceFactory, HLSL_ROOT_SIGNATURE_PATH, &root_signature.m_Data, &root_signature.m_Size);
+            if (result != dmResource::RESULT_OK)
+            {
+                dmLogError("Failed to load ImGui root signature resource '%s' (%d)", HLSL_ROOT_SIGNATURE_PATH, result);
+                FreeShaderResources(shader_resources, shader_resource_count);
+                return false;
+            }
+            shader_desc.m_HlslRootSignature.m_Data = (uint8_t*) root_signature.m_Data;
+            shader_desc.m_HlslRootSignature.m_Count = root_signature.m_Size;
+        }
+
         char error_buffer[1024] = {};
         g_Renderer.m_Program = dmGraphics::NewProgram(g_Renderer.m_Context, &shader_desc, error_buffer, sizeof(error_buffer));
+        free(root_signature.m_Data);
         FreeShaderResources(shader_resources, shader_resource_count);
         if (g_Renderer.m_Program == dmGraphics::INVALID_PROGRAM_HANDLE || g_Renderer.m_Program == 0)
         {
