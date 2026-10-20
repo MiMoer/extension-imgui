@@ -22,15 +22,38 @@ namespace
         { 16057607012685438136ULL, 1, 1, 1 }, // Texture_separated
     };
 
-    // Root parameter order is defined by IMGUI_ROOT_SIGNATURE in the HLSL sources.
+    template <typename T>
+    static auto SetHLSLRootParameterIndex(T& mapping, uint32_t index, int) -> decltype(mapping.m_RootParameterIndex = index, void())
+    {
+        mapping.m_RootParameterIndex = index;
+    }
+
+    template <typename T>
+    static void SetHLSLRootParameterIndex(T&, uint32_t, ...)
+    {
+        // Defold 1.14.0 derives root parameter indices from resource order.
+    }
+
+    static dmGraphics::ShaderDesc::HLSLResourceMapping CreateHLSLResourceMapping(uint64_t name_hash, uint32_t binding, uint32_t set, uint32_t root_parameter_index)
+    {
+        dmGraphics::ShaderDesc::HLSLResourceMapping mapping = {};
+        mapping.m_NameHash = name_hash;
+        mapping.m_Binding = binding;
+        mapping.m_Set = set;
+        SetHLSLRootParameterIndex(mapping, root_parameter_index, 0);
+        return mapping;
+    }
+
+    // Keep vertex then fragment resource order aligned with IMGUI_ROOT_SIGNATURE
+    // for Defold 1.14.0; newer SDKs also use the explicit root parameter indices.
     // Binding/set refer to ShaderDesc reflection, rather than HLSL register numbers.
     static const dmGraphics::ShaderDesc::HLSLResourceMapping HLSL_VERTEX_RESOURCES[] = {
-        { 5242665690161703654ULL, 0, 0, 0 }, // imgui_uniforms -> CBV(b0, space0)
+        CreateHLSLResourceMapping(5242665690161703654ULL, 0, 0, 0), // imgui_uniforms -> CBV(b0, space0)
     };
 
     static const dmGraphics::ShaderDesc::HLSLResourceMapping HLSL_FRAGMENT_RESOURCES[] = {
-        { 11509546322550963027ULL, 0, 1, 1 }, // Texture -> SRV(t0, space1)
-        { 16057607012685438136ULL, 1, 1, 2 }, // Texture_separated -> Sampler(s0, space1)
+        CreateHLSLResourceMapping(11509546322550963027ULL, 0, 1, 1), // Texture -> SRV(t0, space1)
+        CreateHLSLResourceMapping(16057607012685438136ULL, 1, 1, 2), // Texture_separated -> Sampler(s0, space1)
     };
 
     static const char* HLSL_ROOT_SIGNATURE_PATH = "/imgui/shaders/imgui_hlsl_51.rootsig";
