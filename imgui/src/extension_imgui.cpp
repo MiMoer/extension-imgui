@@ -21,8 +21,6 @@
 
 #include <dmsdk/sdk.h>
 
-#include <stdint.h> // uintptr_t: texture handles are passed through Lua as numbers
-
 #include "extension_imgui.h"
 
 #if !defined(DM_HEADLESS)
@@ -3722,7 +3720,12 @@ static int imgui_RenderToTexture(lua_State* L)
         g_imgui_OffscreenRendered = texture != 0;
     }
 
-    lua_pushnumber(L, (double) (uintptr_t) texture);
+    // HTexture is an asset handle with the asset type in the high 32 bits. Converting through
+    // uintptr_t first truncates it on 32 bit pointer targets (wasm32, armv7), which drops the type
+    // and makes the engine reject the handle with ASSET_TYPE_NONE. Handles are capped at 2^53-1
+    // precisely so that they survive the round trip through lua_Number, so convert straight to
+    // double.
+    lua_pushnumber(L, (double) texture);
     return 1;
 }
 
